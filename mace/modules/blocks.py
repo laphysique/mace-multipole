@@ -36,6 +36,22 @@ from .radial import (
     SoftTransform,
 )
 
+MULTIPOLE_IRREPS = [
+    "1x0e",
+    "1x1o",
+    "1x2e",
+    "1x3o",
+    "1x4e",
+]
+
+MULTIPOLE_NAMES = [
+    "monopole",
+    "dipole",
+    "quadrupole",
+    "octupole",
+    "hexadecapole",
+]
+
 
 @compile_mode("script")
 class LinearNodeEmbeddingBlock(torch.nn.Module):
@@ -300,6 +316,94 @@ class NonLinearDipolePolarReadoutBlock(torch.nn.Module):
 
 
 @compile_mode("script")
+class LinearMultipoleReadoutBlock(torch.nn.Module):
+    def __init__(
+        self,
+        irreps_in: o3.Irreps,
+        max_multipole_l: int,
+        cueq_config: Optional[CuEquivarianceConfig] = None,
+        oeq_config: Optional[OEQConfig] = None,  # pylint: disable=unused-argument
+    ):
+        super().__init__()
+
+        # Build irreps based on requested multipole orders
+        irreps_list = []
+        self.max_multipole_l = max_multipole_l
+        self.property_map = {}  # Track which components correspond to which properties
+        component_idx = 0
+
+        for l_ang in range(max_multipole_l):
+            dim_l: int = 2 * l_ang + 1
+            irreps_list.append(MULTIPOLE_IRREPS[l_ang])
+            self.property_map[MULTIPOLE_NAMES[l_ang]] = slice(component_idx, component_idx + dim_l)
+            component_idx += dim_l
+
+        if not irreps_list:
+            raise ValueError("At least one multipole order must be included")
+
+        self.irreps_out = o3.Irreps(" + ".join(irreps_list))
+        self.linear = Linear(
+            irreps_in=irreps_in,
+            irreps_out=self.irreps_out,
+            cueq_config=cueq_config
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [n_nodes, irreps]  # [..., ]
+        y = self.linear(x)  # [n_nodes, 1]
+        return y  # [n_nodes, 1]
+
+
+@compile_mode("script")
+class NonLinearDipolePolarReadoutBlock(torch.nn.Module):
+    def __init__(
+        self,
+        irreps_in: o3.Irreps,
+        MLP_irreps: o3.Irreps,
+        gate: Callable,
+        max_multipole_l: int,
+        cueq_config: Optional[CuEquivarianceConfig] = None,
+        oeq_config: Optional[OEQConfig] = None,  # pylint: disable=unused-argument
+    ):
+        super().__init__()
+        self.hidden_irreps = MLP_irreps
+
+        # Build output irreps based on options
+        irreps_list = []
+        for l_ang in range(max_multipole_l):
+            irreps_list.append(MULTIPOLE_IRREPS[l_ang])
+
+        self.irreps_out = o3.Irreps(" + ".join(irreps_list))
+
+        irreps_scalars = o3.Irreps(
+            [(mul, ir) for mul, ir in MLP_irreps if ir.l == 0 and ir in self.irreps_out]
+        )
+        irreps_gated = o3.Irreps(
+            [(mul, ir) for mul, ir in MLP_irreps if ir.l > 0 and ir in self.irreps_out]
+        )
+        irreps_gates = o3.Irreps([mul, "0e"] for mul, _ in irreps_gated)
+        self.equivariant_nonlin = nn.Gate(
+            irreps_scalars=irreps_scalars,
+            act_scalars=[gate for _, ir in irreps_scalars],
+            irreps_gates=irreps_gates,
+            act_gates=[gate] * len(irreps_gates),
+            irreps_gated=irreps_gated,
+        )
+        self.irreps_nonlin = self.equivariant_nonlin.irreps_in.simplify()
+        self.linear_1 = Linear(
+            irreps_in=irreps_in, irreps_out=self.irreps_nonlin, cueq_config=cueq_config
+        )
+        self.linear_2 = Linear(
+            irreps_in=self.hidden_irreps,
+            irreps_out=self.irreps_out,
+            cueq_config=cueq_config,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # [n_nodes, irreps]  # [..., ]
+        x = self.equivariant_nonlin(self.linear_1(x))
+        return self.linear_2(x)  # [n_nodes, 1]
+
+
+@compile_mode("script")
 class AtomicEnergiesBlock(torch.nn.Module):
     atomic_energies: torch.Tensor
 
@@ -491,8 +595,8 @@ class InteractionBlock(torch.nn.Module):
     def _setup(self) -> None:
         raise NotImplementedError
 
+    @staticmethod
     def handle_lammps(
-        self,
         node_feats: torch.Tensor,
         lammps_class: Optional[Any],
         lammps_natoms: Tuple[int, int],
@@ -510,10 +614,14 @@ class InteractionBlock(torch.nn.Module):
         node_feats = LAMMPS_MP.apply(node_feats, lammps_class)
         return node_feats
 
+    @staticmethod
     def truncate_ghosts(
-        self, tensor: torch.Tensor, n_real: Optional[int] = None
+        tensor: torch.Tensor, n_real: Optional[int] = None
     ) -> torch.Tensor:
-        """Truncate the tensor to only keep the real atoms in case of presence of ghost atoms during multi-GPU MD simulations."""
+        """
+        Truncate the tensor to only keep the real atoms in case of
+        presence of ghost atoms during multi-GPU MD simulations.
+        """
         return tensor[:n_real] if n_real is not None else tensor
 
     @abstractmethod
