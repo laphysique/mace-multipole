@@ -1469,11 +1469,16 @@ class AtomicMultipolesMACE(torch.nn.Module):
         self.register_buffer("change_of_basis", get_change_of_basis())
 
         if means_stds is not None:
-            for ang in MULTIPOLE_NAMES:
-                if f"{ang}_mean" in means_stds:
-                    self.dipole_mean.data.copy_(means_stds[f"{ang}_mean"])
-                if f"{ang}_std" in means_stds:
-                    self.dipole_mean.data.copy_(means_stds[f"{ang}_std"])
+            for i, xpole in enumerate(MULTIPOLE_NAMES):
+                if i > max_multipole_l:
+                    continue
+
+                start_idx = self.l_start_indices[i]
+                end_idx = start_idx + 2 * i + 1
+                if f"{xpole}_mean" in means_stds:
+                    self.multipole_mean.data[start_idx:end_idx].copy_(means_stds[f"{xpole}_mean"])
+                if f"{xpole}_std" in means_stds:
+                    self.multipole_mean.data[start_idx:end_idx].copy_(means_stds[f"{xpole}_std"])
 
         assert atomic_energies is None
 
