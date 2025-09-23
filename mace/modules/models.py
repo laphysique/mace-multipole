@@ -1540,18 +1540,16 @@ class AtomicMultipolesMACE(torch.nn.Module):
 
         for i in range(num_interactions - 1):
             if i == num_interactions - 2:
-                # does it always do polar and dipole together?
                 assert (
-                    len(hidden_irreps) > 1
-                ), "To predict dipoles use at least l=1 hidden_irreps"
-                # hidden_irreps_out = str(
-                #     hidden_irreps[1]
-                # )  # Select only l=1 vectors for last layer
-                hidden_irreps_out = (
-                    hidden_irreps  # this is different in the AtomicDipoleMACE
-                )
+                    len(hidden_irreps) >= max_multipole_l
+                ), f"To predict the {max_multipole_l}th multipole, use at least {max_multipole_l} hidden_irreps"
+
+                # Select terms up to max_multipole_l
+                hidden_irreps_out = " + ".join([str(x) for x in hidden_irreps[0:(max_multipole_l + 1)]])
+
             else:
                 hidden_irreps_out = hidden_irreps
+
             inter = interaction_cls(
                 node_attrs_irreps=node_attr_irreps,
                 node_feats_irreps=hidden_irreps,
