@@ -1530,7 +1530,7 @@ class AtomicMultipolesMACE(torch.nn.Module):
 
         self.readouts = torch.nn.ModuleList()
         self.readouts.append(
-            LinearDipolePolarReadoutBlock(hidden_irreps, use_polarizability=True)
+            LinearMultipolesReadoutBlock(hidden_irreps, max_multipole_l=max_multipole_l)
         )
 
         for i in range(num_interactions - 1):
@@ -1568,22 +1568,18 @@ class AtomicMultipolesMACE(torch.nn.Module):
             self.products.append(prod)
             if i == num_interactions - 2:
                 self.readouts.append(
-                    NonLinearDipolePolarReadoutBlock(
+                    NonLinearMultipolesReadoutBlock(
                         hidden_irreps_out,
                         MLP_irreps,
                         gate,
-                        use_polarizability=True,
+                        max_multipole_l=max_multipole_l,
                     )
                 )
                 # print("Nonlinear irrpes: ", hidden_irreps_out, MLP_irreps)
                 # exit()
             else:
                 self.readouts.append(
-                    LinearDipolePolarReadoutBlock(
-                        hidden_irreps,
-                        # use_charge=True,
-                        use_polarizability=True,
-                    )
+                    LinearMultipolesReadoutBlock(hidden_irreps, max_multipole_l=max_multipole_l)
                 )
 
     def forward(
