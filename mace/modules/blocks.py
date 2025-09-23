@@ -316,7 +316,7 @@ class NonLinearDipolePolarReadoutBlock(torch.nn.Module):
 
 
 @compile_mode("script")
-class LinearMultipoleReadoutBlock(torch.nn.Module):
+class LinearMultipolesReadoutBlock(torch.nn.Module):
     def __init__(
         self,
         irreps_in: o3.Irreps,
@@ -354,7 +354,7 @@ class LinearMultipoleReadoutBlock(torch.nn.Module):
 
 
 @compile_mode("script")
-class NonLinearDipolePolarReadoutBlock(torch.nn.Module):
+class NonLinearMultipolesReadoutBlock(torch.nn.Module):
     def __init__(
         self,
         irreps_in: o3.Irreps,
