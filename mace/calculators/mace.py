@@ -71,15 +71,15 @@ class MACECalculator(Calculator):
         default_dtype: str, default dtype of model
         charges_key: str, Array field of atoms object where atomic charges are stored
         model_type: str, type of model to load
-                    Options: [MACE, DipoleMACE, EnergyDipoleMACE]
+                    Options: [MACE, DipoleMACE, EnergyDipoleMACE, AtomicMultipoleMACE]
 
     Dipoles are returned in units of Debye
     """
 
     def __init__(
         self,
-        model_paths: Union[list, str, None] = None,
-        models: Union[List[torch.nn.Module], torch.nn.Module, None] = None,
+        model_paths: list | str | None = None,
+        models: list[torch.nn.Module] | torch.nn.Module | None = None,
         device: str = "cpu",
         energy_units_to_eV: float = 1.0,
         length_units_to_A: float = 1.0,
@@ -171,9 +171,17 @@ class MACECalculator(Calculator):
                 "stress",
                 "dipole",
             ]
+        elif model_type == "AtomicMultipolesMACE":
+            self.implemented_properties = [
+                "atomic_multipoles",
+                "electric_energy",
+                "electric_forces",
+            ]
+
         else:
             raise ValueError(
-                f"Give a valid model_type: [MACE, DipoleMACE, DipolePolarizabilityMACE, EnergyDipoleMACE], {model_type} not supported"
+                f"Give a valid model_type: [MACE, DipoleMACE, DipolePolarizabilityMACE, "
+                f"EnergyDipoleMACE, AtomicMultipolesMACE], {model_type} not supported"
             )
 
         if model_paths is not None:
@@ -337,39 +345,47 @@ class MACECalculator(Calculator):
         """
         Create tensors to store the results of the committee
         :param model_type: str, type of model to load
-            Options: [MACE, DipoleMACE, EnergyDipoleMACE]
+            Options: [MACE, DipoleMACE, EnergyDipoleMACE, AtomicMultipolesMACE]
         :param num_models: int, number of models in the committee
         :return: tuple of torch tensors
         """
-        dict_of_tensors = {}
         if model_type in ["MACE", "EnergyDipoleMACE"]:
             energies = torch.zeros(num_models, device=self.device)
             node_energy = torch.zeros(num_models, num_atoms, device=self.device)
             forces = torch.zeros(num_models, num_atoms, 3, device=self.device)
             stress = torch.zeros(num_models, 3, 3, device=self.device)
-            dict_of_tensors.update(
-                {
-                    "energies": energies,
-                    "node_energy": node_energy,
-                    "forces": forces,
-                    "stress": stress,
-                }
-            )
+            return {
+                "energies": energies,
+                "node_energy": node_energy,
+                "forces": forces,
+                "stress": stress,
+            }
+
         if model_type in ["EnergyDipoleMACE", "DipoleMACE", "DipolePolarizabilityMACE"]:
             dipole = torch.zeros(num_models, 3, device=self.device)
-            dict_of_tensors.update({"dipole": dipole})
+            return {"dipole": dipole}
+
         if model_type in ["DipolePolarizabilityMACE"]:
             charges = torch.zeros(num_models, num_atoms, device=self.device)
             polarizability = torch.zeros(num_models, 3, 3, device=self.device)
             polarizability_sh = torch.zeros(num_models, 6, device=self.device)
-            dict_of_tensors.update(
-                {
-                    "charges": charges,
-                    "polarizability": polarizability,
-                    "polarizability_sh": polarizability_sh,
-                }
-            )
-        return dict_of_tensors
+            return {
+                "charges": charges,
+                "polarizability": polarizability,
+                "polarizability_sh": polarizability_sh,
+            }
+
+        if model_type == "AtomicMultipolesMACE":
+            electric_energy = torch.zeros(num_models, device=self.device)
+            electric_forces = torch.zeros(num_models, device=self.device)
+            atomic_multipoles = torch.zeros(num_models, num_atoms, , device=self.device)
+            return {
+                "atomic_multipoles": atomic_multipoles,
+                "electric_energy": electric_energy,
+                "electric_forces": electric_forces,
+            }
+            
+        raise ValueError(f"No match model type for {model_type}")
 
     def _atoms_to_batch(self, atoms):
         self.arrays_keys.update({self.charges_key: "charges"})
@@ -499,7 +515,7 @@ class MACECalculator(Calculator):
                 self.results["stress"] = full_3x3_to_voigt_6_stress(
                     torch.mean(ret_tensors["stress"], dim=0).cpu().numpy()
                     * self.energy_units_to_eV
-                    / self.length_units_to_A**3
+                    / self.length_units_to_A ** 3
                 )
                 if self.num_models > 1:
                     self.results["stress_var"] = full_3x3_to_voigt_6_stress(
@@ -507,7 +523,7 @@ class MACECalculator(Calculator):
                         .cpu()
                         .numpy()
                         * self.energy_units_to_eV
-                        / self.length_units_to_A**3
+                        / self.length_units_to_A ** 3
                     )
             if "atomic_stresses" in ret_tensors:
                 self.results["stresses"] = (
@@ -515,7 +531,7 @@ class MACECalculator(Calculator):
                     .cpu()
                     .numpy()
                     * self.energy_units_to_eV
-                    / self.length_units_to_A**3
+                    / self.length_units_to_A ** 3
                 )
             if "atomic_virials" in ret_tensors:
                 self.results["virials"] = (

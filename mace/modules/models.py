@@ -749,7 +749,7 @@ class AtomicDipolesMACE(torch.nn.Module):
 
     def forward(
         self,
-        data: Dict[str, torch.Tensor],
+        data: dict[str, torch.Tensor],
         training: bool = False,  # pylint: disable=W0613
         compute_force: bool = False,
         compute_virials: bool = False,
@@ -757,7 +757,7 @@ class AtomicDipolesMACE(torch.nn.Module):
         compute_displacement: bool = False,
         compute_edge_forces: bool = False,  # pylint: disable=W0613
         compute_atomic_stresses: bool = False,  # pylint: disable=W0613
-    ) -> Dict[str, Optional[torch.Tensor]]:
+    ) -> dict[str, None | torch.Tensor]:
         assert compute_force is False
         assert compute_virials is False
         assert compute_stress is False
@@ -1655,9 +1655,11 @@ class AtomicMultipolesMACE(torch.nn.Module):
 
         # TODO: implement electrostatic energy
         electric_energy = None
+        electric_forces = None
 
         output = {
             "atomic_multipoles": atomic_multipoles,
             "electric_energy": electric_energy,
+            "electric_forces": electric_forces,
         }
         return output
