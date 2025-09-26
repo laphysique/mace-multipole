@@ -1587,20 +1587,23 @@ class AtomicMultipolesMACE(torch.nn.Module):
 
     def forward(
         self,
-        data: Dict[str, torch.Tensor],
+        data: dict[str, torch.Tensor],
         training: bool = False,  # pylint: disable=W0613
         compute_force: bool = False,
         compute_virials: bool = False,
         compute_stress: bool = False,
         compute_displacement: bool = False,
-        compute_dielectric_derivatives: bool = False,  # no training on derivatives
+        # compute_dielectric_derivatives: bool = False,  # no training on derivatives
         compute_edge_forces: bool = False,  # pylint: disable=W0613
         compute_atomic_stresses: bool = False,  # pylint: disable=W0613
-    ) -> Dict[str, Optional[torch.Tensor]]:
-        assert compute_force is False
-        assert compute_virials is False
-        assert compute_stress is False
-        assert compute_displacement is False
+    ) -> dict[str, None | torch.Tensor]:
+        assert not compute_force
+        assert not compute_virials
+        assert not compute_stress
+        assert not compute_displacement
+        assert not compute_edge_forces
+        assert not compute_atomic_stresses
+
         # Setup
         data["node_attrs"].requires_grad_(True)
         data["positions"].requires_grad_(True)
@@ -1620,11 +1623,9 @@ class AtomicMultipolesMACE(torch.nn.Module):
         )
 
         # Interactions
-        charges = []
-        dipoles = []
-        polarizabilities = []
+        multipoles = []
         for interaction, product, readout in zip(
-            self.interactions, self.products, self.readouts
+            self.intproductseractions, self.products, self.readouts
         ):
             node_feats, sc = interaction(
                 node_attrs=data["node_attrs"],
@@ -1641,93 +1642,22 @@ class AtomicMultipolesMACE(torch.nn.Module):
                 node_attrs=data["node_attrs"],
             )
 
-            node_out = readout(node_feats).squeeze(-1)  # [n_nodes,3]
-            charges.append(node_out[:, 0])
+            node_out = readout(node_feats).squeeze(-1)  # [n_nodes, n_multipole_components]
+            multipoles.append(node_out)
 
-            if self.use_polarizability:
-                node_dipoles = node_out[:, 2:5]
-                node_polarizability = torch.cat(
-                    (node_out[:, 1].unsqueeze(-1), node_out[:, 5:]), dim=-1
-                )
-                polarizabilities.append(node_polarizability)
-                dipoles.append(node_dipoles)
-            else:
-                raise ValueError(
-                    "Polarizability is not used in this model, but it is required for the AtomicDielectricMACE."
-                )
-        contributions_dipoles = torch.stack(
-            dipoles, dim=-1
-        )  # [n_nodes,3,n_contributions]
-        atomic_dipoles = torch.sum(contributions_dipoles, dim=-1)  # [n_nodes,3]
-        atomic_charges = torch.stack(charges, dim=-1).sum(-1)  # [n_nodes,]
-        # The idea is to normalize the charges so that they sum to the net charge in the system before predicting the dipole.
+        atomic_multipoles = torch.stack(multipoles, dim=-1).sum(-1)  # [n_nodes, n_multipole_components]
+
+        # Normalize charges to guarantee net charge conservation
         total_charge_excess = scatter_mean(
-            src=atomic_charges, index=data["batch"], dim_size=num_graphs
+            src=atomic_multipoles[:, 0], index=data["batch"], dim_size=num_graphs
         ) - (data["total_charge"] / num_atoms)
-        atomic_charges = atomic_charges - total_charge_excess[data["batch"]]
-        total_dipole = scatter_sum(
-            src=atomic_dipoles,
-            index=data["batch"],
-            dim=0,
-            dim_size=num_graphs,
-        )  # [n_graphs,3]
-        baseline = compute_fixed_charge_dipole_polar(
-            charges=atomic_charges,  # or data["charges"], ?????
-            positions=data["positions"],
-            batch=data["batch"],
-            num_graphs=num_graphs,
-        )  # [n_graphs,3]
-        total_dipole = total_dipole + baseline
+        atomic_multipoles[:, 0] -= total_charge_excess[data["batch"]]
 
-        if self.use_polarizability:
-            # Compute the polarizabilities
-            contributions_polarizabilities = torch.stack(
-                polarizabilities, dim=-1
-            )  # [n_nodes,6,n_contributions]
-            atomic_polarizabilities = torch.sum(
-                contributions_polarizabilities, dim=-1
-            )  # [n_nodes,6]
-            total_polarizability_spherical = scatter_sum(
-                src=atomic_polarizabilities,
-                index=data["batch"],
-                dim=0,
-                dim_size=num_graphs,
-            )  # [n_graphs,6]
-            total_polarizability = spherical_to_cartesian(
-                total_polarizability_spherical, self.change_of_basis
-            )
-
-            if compute_dielectric_derivatives:
-                dmu_dr = compute_dielectric_gradients(
-                    dielectric=total_dipole,
-                    positions=data["positions"],
-                )
-                dalpha_dr = compute_dielectric_gradients(
-                    dielectric=total_polarizability.flatten(-2),
-                    positions=data["positions"],
-                )
-            else:
-                dmu_dr = None
-                dalpha_dr = None
-        else:
-            if compute_dielectric_derivatives:
-                dmu_dr = compute_dielectric_gradients(
-                    dielectric=total_dipole,
-                    positions=data["positions"],
-                )
-            else:
-                dmu_dr = None
-            total_polarizability = None
-            total_polarizability_spherical = None
-            dalpha_dr = None
+        # TODO: implement electrostatic energy
+        electric_energy = None
 
         output = {
-            "charges": atomic_charges,
-            "dipole": total_dipole,
-            "atomic_dipoles": atomic_dipoles,
-            "polarizability": total_polarizability,
-            "polarizability_sh": total_polarizability_spherical,
-            "dmu_dr": dmu_dr,
-            "dalpha_dr": dalpha_dr,
+            "atomic_multipoles": atomic_multipoles,
+            "electric_energy": electric_energy,
         }
         return output
